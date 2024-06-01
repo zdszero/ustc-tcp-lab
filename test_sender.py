@@ -94,5 +94,36 @@ class SenderWindow(SenderTestBase):
         self.expectSegment(conn, no_flags=True, payload=b'45678')
         self.expectNoSegment(conn)
 
+    def test_fin_not_in_window(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=7)))
+        self.expectNoSegment(conn)
+        conn.write(b'1234567')
+        conn.shutdown_write()
+        self.expectSegment(conn, no_flags=True, payload=b'1234567')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.state, TcpState.ESTABLISHED)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+8, win=1)))
+        self.expectSegment(conn, fin=True)
+        self.expectNoSegment(conn)
+
+
+class SenderClose(SenderTestBase):
+    def test_fourway_handshake(self):
+        cap = 1000
+        sender_isn, receiver_isn = 10000, 20000
+        conn = self.new_eastablished_connection(cap, sender_isn, receiver_isn)
+        conn.shutdown_write()
+        self.expectSegment(conn, fin=True, seqno=sender_isn+1)
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.state, TcpState.FIN_WAIT_1)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=sender_isn+2)))
+        self.assertEqual(conn.state, TcpState.FIN_WAIT_2)
+        conn.segment_received(TcpSegment(TcpHeader(fin=True, seqno=receiver_isn+1)))
+        self.expectSegment(conn, ack=True, ackno=receiver_isn+2)
+        self.assertEqual(conn.state, TcpState.TIME_WAIT)
+
 if __name__ == '__main__':
     unittest.main()

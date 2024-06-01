@@ -49,10 +49,16 @@ def timestamp_ms():
 
 
 def wrap(n: uint64, isn: uint32) -> uint32:
+    """
+    convert absolute seqno to seqno
+    """
     return (n + isn) & 0xffffffff
 
 
 def unwrap(n: uint32, isn: uint32, checkpoint: uint64):
+    """
+    convert seqno to absolute seqno
+    """
     c: uint32 = wrap(checkpoint, isn)
     tmp1, tmp2 = 0, 0
     if n >= c:

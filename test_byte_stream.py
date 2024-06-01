@@ -1,5 +1,5 @@
 import unittest
-from ..byte_stream import ByteStream
+from byte_stream import ByteStream
 
 
 class TestByteStream(unittest.TestCase):
