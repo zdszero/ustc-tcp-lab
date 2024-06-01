@@ -68,4 +68,4 @@ def unwrap(n: uint32, isn: uint32, checkpoint: uint64):
 
 
 def uint32_plus(n: uint32, x: uint32 = 1):
-    return (n + x) % UINT32_MAX
+    return (n + x) % (1 << 32)

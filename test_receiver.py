@@ -270,7 +270,9 @@ class TestReceiverClose(ReceiverTestBase):
         isn = 10000
         conn = self.new_eastablished_connection(4000, isn)
         conn.segment_received(TcpSegment(
-            TcpHeader(seqno=isn+1), payload=b'12'))
+            TcpHeader(fin=True, seqno=isn+1),
+            payload=b'12')
+        )
         conn.inbound_stream.end_input()
         conn.segment_received(TcpSegment(TcpHeader(fin=True)))
         self.assertEqual(conn.state, TcpState.LAST_ACK)

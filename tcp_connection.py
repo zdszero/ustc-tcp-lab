@@ -42,9 +42,10 @@ class TcpConnection:
         if self._state != TcpState.CLOSED:
             raise RuntimeError(
                 'tcp state is not closed when calling connect()')
-        seg = TcpSegment(TcpHeader())
-        seg.header.syn = True
-        self._send_segment(seg)
+        self._send_segment(TcpSegment(TcpHeader(
+            syn=True,
+            seqno=self._sender_isn
+        )))
         self._state = TcpState.SYN_SENT
 
     def write(self, data: bytes) -> int:
@@ -86,12 +87,12 @@ class TcpConnection:
         if not seg.header.syn:
             return
         self._receiver_isn = seg.header.seqno
-        ackseg = TcpSegment(TcpHeader())
-        ackseg.header.syn = True
-        ackseg.header.ack = True
-        ackseg.header.ackno = uint32_plus(seg.header.seqno)
-        ackseg.header.seqno = self._sender_isn
-        self._send_segment(ackseg)
+        self._send_segment(TcpSegment(TcpHeader(
+            syn=True,
+            ack=True,
+            ackno=uint32_plus(seg.header.seqno),
+            seqno=self._sender_isn
+        )))
         self._state = TcpState.SYN_RECEIVED
 
     def _fsm_syn_sent(self, seg: TcpSegment):
@@ -103,7 +104,10 @@ class TcpConnection:
         ):
             return
         self._receiver_isn = seg.header.seqno
-        self._send_empty_segment()
+        self._send_segment(TcpSegment(TcpHeader(
+            ack=True,
+            ackno=uint32_plus(seg.header.seqno, 1)
+        )))
         self._state = TcpState.ESTABLISHED
 
     def _fsm_syn_received(self, seg: TcpSegment):
@@ -125,14 +129,17 @@ class TcpConnection:
         eof = seg.header.fin
         if eof:
             self._state = TcpState.CLOSE_WAIT
-        self._reassembler.data_received(
-            stream_index, seg.payload, eof)
+        if len(seg.payload) > 0:
+            self._reassembler.data_received(stream_index, seg.payload, eof)
+            assert self.ackno
+            self._send_segment(TcpSegment(TcpHeader(
+                ack=True,
+                ackno=self.ackno
+            )))
         # sender operation
         if seg.header.ack:
             self._receiver_window_size = seg.header.win
             self._ack_received(seg.header.ackno)
-        elif len(seg.payload) > 0:
-            self._send_empty_segment()
         if (
             self._state == TcpState.CLOSE_WAIT and
             self.inbound_stream.eof and
@@ -212,19 +219,11 @@ class TcpConnection:
             self._timer_enabled = False
         self._fill_window()
 
-    def _send_empty_segment(self):
-        seg = TcpSegment(TcpHeader())
-        self._send_segment(seg)
-
     def _send_segment(
-            self,
-            seg: TcpSegment,
-        ):
-        seg.header.seqno = self._wrap_sender(self._next_seqno_absolute)
+        self,
+        seg: TcpSegment,
+    ):
         self._next_seqno_absolute += seg.length_in_sequence_space
-        if self.ackno is not None:
-            seg.header.ack = True
-            seg.header.ackno = self.ackno
         seg.header.win = self.window_size
         self._segments_out.append(seg)
         if len(seg.payload) > 0:
@@ -251,8 +250,7 @@ class TcpConnection:
                 payload_size = min(
                     send_size, self._max_payload_size, self._stream_in.size)
                 payload = self._stream_in.read(payload_size)
-                seg = TcpSegment(TcpHeader())
-                seg.payload = payload
+                seg = TcpSegment(TcpHeader(), payload)
                 if self._stream_in.eof:
                     seg.header.fin = True
                     self._state = TcpState.FIN_WAIT_1
