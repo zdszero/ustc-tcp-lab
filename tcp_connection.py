@@ -189,27 +189,28 @@ class TcpConnection:
         assert self._receiver_isn
         return unwrap(n, self._receiver_isn, checkpoint)
 
-    def _ack_valid(self, ackno_absolute: int) -> bool:
-        if not self._outgoing_segments:
-            return ackno_absolute <= self._next_seqno_absolute
-        first_seqno_absolute = self._unwrap_sender(
-            self._outgoing_segments[0].header.seqno)
-        return first_seqno_absolute <= ackno_absolute <= self._next_seqno_absolute
-
     def _ack_received(self, ackno: int):
         """
         Remove acked segments from outgoing
         Reset timer
         """
+        # print('_next_seqno_absolute =', self._next_seqno_absolute)
+        def ack_valid(ackno_absolute: int) -> bool:
+            if not self._outgoing_segments:
+                return ackno_absolute <= self._next_seqno_absolute
+            first_seqno_absolute = self._unwrap_sender(
+                self._outgoing_segments[0].header.seqno)
+            return first_seqno_absolute <= ackno_absolute <= self._next_seqno_absolute
+
         ackno_absolute = self._unwrap_sender(ackno)
-        if not self._ack_valid(ackno_absolute):
+        if not ack_valid(ackno_absolute):
             return
         while self._outgoing_segments:
             seg = self._outgoing_segments[0]
             expected_ackno_absolute = self._unwrap_sender(
                 seg.header.seqno + seg.length_in_sequence_space)
             if ackno_absolute >= expected_ackno_absolute:
-                self._segments_out.append(self._outgoing_segments.popleft())
+                self._outgoing_segments.popleft()
                 self._rto = 0
                 self._consecutive_retransmissions = 0
                 self._time_elapsed = 0
@@ -250,7 +251,9 @@ class TcpConnection:
                 payload_size = min(
                     send_size, self._max_payload_size, self._stream_in.size)
                 payload = self._stream_in.read(payload_size)
-                seg = TcpSegment(TcpHeader(), payload)
+                seg = TcpSegment(TcpHeader(
+                    seqno = self._wrap_sender(self._next_seqno_absolute)
+                ), payload)
                 if self._stream_in.eof:
                     seg.header.fin = True
                     self._state = TcpState.FIN_WAIT_1

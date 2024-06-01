@@ -23,6 +23,7 @@ class TcpTestBase(unittest.TestCase):
     def expectSegment(
         self,
         conn: TcpConnection,
+        no_flags: bool = False,
         syn: Optional[bool] = None,
         ack: Optional[bool] = None,
         fin: Optional[bool] = None,
@@ -34,6 +35,11 @@ class TcpTestBase(unittest.TestCase):
     ):
         self.assertGreater(len(conn.segments_out), 0)
         seg = conn.segments_out.popleft()
+        if no_flags:
+            self.assertEqual(seg.header.syn, False)
+            self.assertEqual(seg.header.ack, False)
+            self.assertEqual(seg.header.fin, False)
+            self.assertEqual(seg.header.urg, False)
         if syn is not None:
             self.assertEqual(seg.header.syn, syn)
         if ack is not None:

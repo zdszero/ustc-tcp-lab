@@ -67,7 +67,7 @@ class SenderWindow(SenderTestBase):
         conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=4)))
         self.expectNoSegment(conn)
         conn.write(b'1234567')
-        self.expectSegment(conn, payload=b'1234')
+        self.expectSegment(conn, no_flags=True, payload=b'1234')
 
     def test_repeat(self):
         isn, isn2 = 10000, 20000
@@ -79,8 +79,20 @@ class SenderWindow(SenderTestBase):
             conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=recvwin)))
             self.expectNoSegment(conn)
             conn.write(b'a' * (2 * reps))
-            self.expectSegment(conn, payload_size=recvwin)
+            self.expectSegment(conn, no_flags=True, payload_size=recvwin)
             self.expectNoSegment(conn)
+
+    def test_window_growth(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=4)))
+        self.expectNoSegment(conn)
+        conn.write(b'0123456789')
+        self.expectSegment(conn, no_flags=True, payload=b'0123')
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+5, win=5)))
+        self.expectSegment(conn, no_flags=True, payload=b'45678')
+        self.expectNoSegment(conn)
 
 if __name__ == '__main__':
     unittest.main()
