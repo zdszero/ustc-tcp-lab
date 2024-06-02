@@ -109,12 +109,26 @@ class SenderWindow(SenderTestBase):
         self.expectSegment(conn, fin=True)
         self.expectNoSegment(conn)
 
+    def test_piggyback_fin(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))
+        self.expectNoSegment(conn)
+        conn.write(b'1234567')
+        conn.shutdown_write()
+        self.expectSegment(conn, no_flags=True, payload=b'123')
+        self.expectNoSegment(conn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=8)))
+        self.expectSegment(conn, fin=True, payload=b'4567')
+        self.expectNoSegment(conn)
 
 class SenderClose(SenderTestBase):
     def test_fourway_handshake(self):
         cap = 1000
         sender_isn, receiver_isn = 10000, 20000
         conn = self.new_eastablished_connection(cap, sender_isn, receiver_isn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, seqno=receiver_isn+1, win=10)))
         conn.shutdown_write()
         self.expectSegment(conn, fin=True, seqno=sender_isn+1)
         self.expectNoSegment(conn)

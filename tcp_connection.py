@@ -252,35 +252,35 @@ class TcpConnection:
             self._time_elapsed = 0
 
     @property
-    def next_expected_ackno(self):
+    def available_receiver_space(self):
         if len(self._outgoing_segments) == 0:
-            return self._next_seqno_absolute
-        return self._unwrap_sender(self._outgoing_segments[0].header.seqno)
+            return self._receiver_window_size
+        window_left = self._unwrap_sender(self._outgoing_segments[0].header.seqno)
+        window_right = window_left + self._receiver_window_size
+        available_space = window_right - self._next_seqno_absolute
+        return available_space
 
     def _fill_window(self):
         if self.fin_sent:
             return
-        window_left = self.next_expected_ackno
-        window_right = window_left + self._receiver_window_size
-        available_space = window_right - self._next_seqno_absolute
-        send_size = min(self._stream_in.size + int(self._stream_in.eof), available_space)
+        send_size = min(self._stream_in.size + int(self._stream_in.input_ended),
+                        self.available_receiver_space)
         assert send_size >= 0
-        if send_size > 0:
-            while send_size > 0:
-                payload_size = min(send_size - int(self._stream_in.eof),
-                                   self._max_payload_size)
-                payload = self._stream_in.read(payload_size)
-                assert not self._stream_in.error
-                seg = TcpSegment(TcpHeader(
-                    seqno = self._wrap_sender(self._next_seqno_absolute)
-                ), payload)
-                send_size -= payload_size
-                if self._stream_in.eof and send_size > 0:
-                    seg.header.fin = True
-                    self._state = TcpState.FIN_WAIT_1
-                    self._fin_sent = True
-                    send_size -= 1
-                self._send_segment(seg)
+        while send_size > 0:
+            payload_size = min(send_size - int(self._stream_in.input_ended),
+                               self._max_payload_size)
+            payload = self._stream_in.read(payload_size)
+            assert not self._stream_in.error
+            seg = TcpSegment(TcpHeader(
+                seqno = self._wrap_sender(self._next_seqno_absolute)
+            ), payload)
+            send_size -= payload_size
+            if self._stream_in.eof and send_size > 0:
+                seg.header.fin = True
+                self._state = TcpState.FIN_WAIT_1
+                self._fin_sent = True
+                send_size -= 1
+            self._send_segment(seg)
 
     def tick(self, ms_since_last_tick: int):
         if not self._timer_enabled:
