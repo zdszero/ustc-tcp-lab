@@ -139,5 +139,158 @@ class SenderClose(SenderTestBase):
         self.expectSegment(conn, ack=True, ackno=receiver_isn+2)
         self.assertEqual(conn.state, TcpState.TIME_WAIT)
 
+class SenderTransmit(SenderTestBase):
+    def test_three_short_writes(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=10)))
+        conn.write(b'ab')
+        self.expectSegment(conn, no_flags=True, payload=b'ab', seqno=isn+1)
+        conn.write(b'cd')
+        self.expectSegment(conn, no_flags=True, payload=b'cd',seqno=isn+3)
+        conn.write(b'abcd')
+        self.expectSegment(conn, no_flags=True, payload=b'abcd', seqno=isn+5)
+        self.assertEqual(conn.next_seqno, isn+9)
+        self.assertEqual(conn.bytes_in_flight, 8)
+        self.assertEqual(conn.state, TcpState.ESTABLISHED)
+
+
+    def test_short_writes_and_countinuos_acks(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=10)))
+        max_block_size=10
+        n_rounds=1000
+        bytes_send=0
+        for i in range(n_rounds):
+            data=b''
+            block_size=random.randint(1, max_block_size)
+            for j in range(block_size):
+                c=chr(ord('a')+(i+j)%26)
+                data+=c.encode()
+            self.assertEqual(conn.next_seqno, isn+bytes_send+1)
+            conn.write(data)
+            self.expectSegment(conn, no_flags=True, payload=data, seqno=isn+bytes_send+1)
+            bytes_send+=block_size
+            self.assertEqual(conn.bytes_in_flight, block_size)
+            self.expectNoSegment(conn)
+            conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+bytes_send+1, win=10)))
+
+    def test_short_writes_and_ack_at_end(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=65000)))
+        max_block_size=10
+        n_rounds=1000
+        bytes_send=0
+        for i in range(n_rounds):
+            data=b''
+            block_size=random.randint(1, max_block_size)
+            for j in range(block_size):
+                c=chr(ord('a')+(i+j)%26)
+                data+=c.encode()
+            self.assertEqual(conn.next_seqno, isn+bytes_send+1)
+            conn.write(data)
+            self.expectSegment(conn, no_flags=True, payload=data, seqno=isn+bytes_send+1)
+            bytes_send+=block_size
+            self.assertEqual(conn.bytes_in_flight, bytes_send)
+            self.expectNoSegment(conn)
+        self.assertEqual(conn.bytes_in_flight, bytes_send)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+bytes_send+1, win=10)))
+        self.assertEqual(conn.bytes_in_flight, 0)
+
+    def test_window_filling(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))
+        conn.write(b'01234567')
+        self.assertEqual(conn.bytes_in_flight, 3)
+        self.expectSegment(conn, no_flags=True, payload=b'012')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.next_seqno, isn+1+3)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1+3, win=3)))
+        self.assertEqual(conn.bytes_in_flight, 3)
+        self.expectSegment(conn, no_flags=True, payload=b'345')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.next_seqno, isn+1+6)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1+6, win=3)))
+        self.assertEqual(conn.bytes_in_flight, 2)
+        self.expectSegment(conn, no_flags=True, payload=b'67')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.next_seqno, isn+1+8)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1+8, win=3)))
+        self.assertEqual(conn.bytes_in_flight, 0)
+        self.expectNoSegment(conn)
+
+    def test_immediate_write_respect_windoew(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))   
+        conn.write(b'01')
+        self.assertEqual(conn.bytes_in_flight, 2)
+        self.expectSegment(conn, no_flags=True, payload=b'01')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.next_seqno, isn+1+2)
+        conn.write(b'23')
+        self.assertEqual(conn.bytes_in_flight, 3)
+        self.expectSegment(conn, no_flags=True, payload=b'2')
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.next_seqno, isn+1+3)     
+
+class SenderACK(SenderTestBase):
+    def test_repeat_ACK(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))  
+        conn.write(b'a')
+        self.expectSegment(conn, no_flags=True, payload=b'a')
+        self.expectNoSegment(conn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))  
+        self.expectNoSegment(conn)
+
+    def test_old_ACK(self):
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3)))  
+        conn.write(b'a')
+        self.expectSegment(conn, no_flags=True, payload=b'a')
+        self.expectNoSegment(conn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+2, win=3)))
+        conn.write(b'b')
+        self.expectSegment(conn, no_flags=True, payload=b'b')
+        self.expectNoSegment(conn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=3))) 
+        self.expectNoSegment(conn)
+
+    def test_impossible_ackno(self):#Impossible ackno (beyond next seqno) is ignored
+        cap = 1000
+        isn=10000
+        conn = self.new_closed_connection(cap, isn)
+        conn.connect()
+        self.assertEqual(conn.state, TcpState.SYN_SENT)
+        self.expectSegment(conn, syn=True, seqno=isn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+2, win=1000)))  
+        self.assertEqual(conn.state, TcpState.SYN_SENT)
+
+    def test_early_ackno(self):#Early ACK results in bare ACK
+        cap = 1000
+        isn, isn2 = 10000, 20000
+        conn = self.new_eastablished_connection(cap, isn, isn2)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+1, win=10)))
+        conn.write(b'a')
+        self.expectSegment(conn, no_flags=True, payload=b'a')
+        self.expectNoSegment(conn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+17, win=10)))  
+        self.assertEqual(conn.next_seqno, isn+2)
+        self.expectNoSegment(conn)
+
+
 if __name__ == '__main__':
     unittest.main()
