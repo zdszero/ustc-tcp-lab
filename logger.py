@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import inspect
 import time
-
-try:
-    LOG_DEBUG
-except NameError:
-    LOG_DEBUG = True
+from config import ENABLED_CHANNELS
 
 STYLES = {
     "</>": "\33[0m",
@@ -37,7 +33,7 @@ START_TIME = time.time()
 def log(channel: str, message: str, inspect_depth: int = 1):
     if not __debug__:
         return
-    if LOG_DEBUG:
+    if channel in ENABLED_CHANNELS:
         frame_info = inspect.stack()[inspect_depth]
         caller_class = frame_info.frame.f_locals["self"].__class__.__name__
         caller_method = frame_info.function

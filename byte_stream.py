@@ -47,6 +47,10 @@ class ByteStream:
     @property
     def error(self):
         return self._error
+    
+    @error.setter
+    def error(self, val):
+        self._error = val
 
     @property
     def input_ended(self) -> bool:

@@ -43,6 +43,23 @@ class SenderTestBase(TcpTestBase):
         self.expectNoSegment(conn)
         return conn
 
+    def new_fin_wait_1_connection(
+        self,
+        capacity: int,
+        isn1=random.randint(0, UINT32_MAX),
+        isn2=random.randint(0, UINT32_MAX)
+    ) -> TcpConnection:
+        conn = self.new_eastablished_connection(
+            capacity, isn1, isn2
+        )
+        conn.shutdown_write()
+        self.expectSegment(conn,
+                           fin=True,
+                           ack=True,
+                           ackno=uint32_plus(isn2),
+                           seqno=uint32_plus(isn1))
+        self.assertEqual(conn.state, TcpState.FIN_WAIT_1)
+        return conn
 
 class SenderConnect(SenderTestBase):
     def test_three_handshake(self):
@@ -138,6 +155,18 @@ class SenderClose(SenderTestBase):
         conn.segment_received(TcpSegment(TcpHeader(fin=True, seqno=receiver_isn+1)))
         self.expectSegment(conn, ack=True, ackno=receiver_isn+2)
         self.assertEqual(conn.state, TcpState.TIME_WAIT)
+
+    def test_closing(self):
+        cap = 1000
+        sender_isn, receiver_isn = 10000, 20000
+        conn = self.new_eastablished_connection(cap, sender_isn, receiver_isn)
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, seqno=receiver_isn+1, win=10)))
+        conn.shutdown_write()
+        self.expectSegment(conn, fin=True, seqno=sender_isn+1)
+        self.expectNoSegment(conn)
+        self.assertEqual(conn.state, TcpState.FIN_WAIT_1)
+        conn.segment_received(TcpSegment(TcpHeader(fin=True, ack=True, ackno=sender_isn+2)))
+        self.assertEqual(conn.state, TcpState.CLOSING)
 
 class SenderTransmit(SenderTestBase):
     def test_three_short_writes(self):

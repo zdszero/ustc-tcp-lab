@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+ENABLED_CHANNELS = [
+]
 
 @dataclass
 class TcpConfig:

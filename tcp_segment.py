@@ -42,6 +42,7 @@ def tcp_checksum(src_ip: str, dst_ip: str, tcp_header: bytes, tcp_data: bytes):
 
 
 class TcpHeader:
+    LENGTH = 20
     def __init__(
         self,
         sport = 0,
@@ -74,7 +75,12 @@ class TcpHeader:
         self.cksum = cksum
         self.uptr = uptr
 
-    def serialize(self, src_ip: str, dst_ip: str, payload_data: bytes):
+    def serialize(
+            self,
+            src_ip: str,
+            dst_ip: str,
+            payload_data: bytes
+        ):
         flags = (self.urg << 5 | self.ack << 4 | self.psh << 3 | self.rst << 2 | self.syn << 1 | self.fin)
 
         # Pack the header fields into a binary format
@@ -96,12 +102,18 @@ class TcpHeader:
         return header_data
 
     @classmethod
-    def deserialize(cls, src_ip: str, dst_ip: str, data: bytes) -> Optional['TcpHeader']:
+    def deserialize(
+        cls,
+        data: bytes,
+        src_ip: str,
+        dst_ip: str
+    ) -> Optional['TcpHeader']:
         header_data = data[:TCP_HEADER_LENGTH]
         origin_header_data = header_data[:16] + b'\x00\x00' + header_data[18:]
         payload_data = data[TCP_HEADER_LENGTH:]
+        expected_cksum = struct.unpack('!H', header_data[16:18])[0]
         cksum = tcp_checksum(src_ip, dst_ip, origin_header_data, payload_data)
-        if cksum != struct.unpack('!H', header_data[16:18])[0]:
+        if cksum != expected_cksum:
             return None
 
         fields = struct.unpack('!HHIIBBHHH', header_data)
@@ -138,8 +150,8 @@ class TcpSegment:
         self,
         header: TcpHeader,
         payload: bytes = b'',
-        src_ip: str = '',
-        dst_ip: str = ''
+        src_ip: str = '0.0.0.0',
+        dst_ip: str = '0.0.0.0'
     ):
         self.header = header
         self.payload = payload
@@ -152,51 +164,18 @@ class TcpSegment:
     @classmethod
     def deserialize(
         cls,
-        src_ip: str,
-        dst_ip: str,
         data: bytes,
+        src_ip: str = '0.0.0.0',
+        dst_ip: str = '0.0.0.0'
     ) -> Optional['TcpSegment']:
-        header_data = data[:TCP_HEADER_LENGTH]
-        header = TcpHeader.deserialize(src_ip, dst_ip, header_data)
+        header = TcpHeader.deserialize(data, src_ip, dst_ip)
         if not header:
             return None
         payload = data[TCP_HEADER_LENGTH:]
-        seg = cls(header, payload, '', '')
+        # print(f'payload = {payload}')
+        seg = cls(header, payload, src_ip, dst_ip)
         return seg
 
     @property
     def length_in_sequence_space(self) -> int:
         return len(self.payload) + int(self.header.syn) + int(self.header.fin)
-
-
-if __name__ == '__main__':
-    # s1 = TcpSegment(TcpHeader())
-    # s1.header.syn = True
-    # s1.header.fin = True
-    # s2 = TcpSegment(TcpHeader())
-    # print(s2.header.fin, s2.header.syn)
-    # debug code
-    header = TcpHeader()
-    header.sport = 12345
-    header.dport = 80
-    header.seqno = 1000
-    header.ackno = 2000
-    header.urg = True
-    header.ack = True
-    header.psh = True
-    header.win = 8192
-    header.uptr = 0
-
-    src_ip = '192.168.1.1'
-    dst_ip = '192.168.1.2'
-    payload = b''
-    seg = TcpSegment(header, payload, src_ip, dst_ip)
-    serialized_seg = seg.serialize()
-    print("Serialized:", serialized_seg)
-    seg2 = TcpSegment.deserialize(src_ip, dst_ip, serialized_seg)
-    assert seg2
-    for f, v in header.__dict__.items():
-        # print(f, v, seg2.header.__dict__[f])
-        assert v == seg2.header.__dict__[f]
-    assert seg.payload == seg2.payload
-

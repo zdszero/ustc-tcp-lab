@@ -2,6 +2,7 @@ from collections import deque
 from random import randint
 from typing import Deque, Optional
 
+from logger import log
 from utils import wrap, unwrap, uint32_plus
 from stream_reassembler import StreamReassembler
 from byte_stream import ByteStream
@@ -31,7 +32,7 @@ class TcpConnection:
         self._segments_out: Deque[TcpSegment] = deque()
         self._outgoing_segments: Deque[TcpSegment] = deque()
         self._consecutive_retransmissions = 0
-        self._rto = 0
+        self._rto = cfg.rt_timeout
         self._stream_in = ByteStream(self._send_capacity)
         self._linger_after_stream_finish = False
         self._fin_sent = False
@@ -132,7 +133,9 @@ class TcpConnection:
         if eof:
             self._state = TcpState.CLOSE_WAIT
             self._fin_received = True
+            log('FSM', f'receive FIN at {stream_index}')
         if len(seg.payload) > 0:
+            log('FSM', f'receive data at {stream_index} with payload length {len(seg.payload)}')
             self._reassembler.data_received(stream_index, seg.payload, eof)
             assert self.ackno
             self._send_segment(TcpSegment(TcpHeader(
@@ -143,6 +146,10 @@ class TcpConnection:
         if seg.header.ack:
             self._receiver_window_size = seg.header.win
             self._ack_received(seg.header.ackno)
+
+    def _fsm_closed_wait(self, seg: TcpSegment):
+        if self.unassembled_bytes > 0:
+            self._fsm_eastablished(seg)
         if (
             self._state == TcpState.CLOSE_WAIT and
             self.inbound_stream.eof and
@@ -152,9 +159,6 @@ class TcpConnection:
             seg = TcpSegment(TcpHeader(fin=True))
             self._send_segment(seg)
             self._state = TcpState.LAST_ACK
-
-    def _fsm_closed_wait(self, seg: TcpSegment):
-        self._fsm_eastablished(seg)
 
     def _fsm_last_ack(self, seg: TcpSegment):
         expected_ackno = self._wrap_sender(self._next_seqno_absolute)
@@ -172,7 +176,10 @@ class TcpConnection:
             seg.header.ackno == expected_ackno
         ):
             return
-        self._state = TcpState.FIN_WAIT_2
+        if seg.header.fin:
+            self._state = TcpState.CLOSING
+        else:
+            self._state = TcpState.FIN_WAIT_2
 
     def _fsm_fin_wait_2(self, seg: TcpSegment):
         if (
@@ -229,7 +236,7 @@ class TcpConnection:
                 seg.header.seqno + seg.length_in_sequence_space)
             if ackno_absolute >= expected_ackno_absolute:
                 self._outgoing_segments.popleft()
-                self._rto = 0
+                self._rto = self._retx_timeout
                 self._consecutive_retransmissions = 0
                 self._time_elapsed = 0
             else:
@@ -250,6 +257,13 @@ class TcpConnection:
         if not self._timer_enabled:
             self._timer_enabled = True
             self._time_elapsed = 0
+        seg_attrs = []
+        if seg.header.ack:
+            seg_attrs.append('ack=1')
+            seg_attrs.append(f'ackno={self.ackno}')
+        if len(seg.payload) > 0:
+            seg_attrs.append(f'payload_len={len(seg.payload)}')
+        log('FSM', 'send segment with ' + ','.join(seg_attrs))
 
     @property
     def available_receiver_space(self):
@@ -287,12 +301,21 @@ class TcpConnection:
             return
         self._time_elapsed += ms_since_last_tick
         if self._time_elapsed >= self._rto:
+            if self._consecutive_retransmissions >= self._max_retx_attempts:
+                self._stream_in.error = True
+                self._reassembler._stream_out.error = True
+                self._send_segment(TcpSegment(TcpHeader(
+                    rst=True
+                )))
+                self._active = False
+                return
             assert self._outgoing_segments
             self._segments_out.append(self._outgoing_segments[0])
             if self._receiver_window_size:
                 self._rto = (self._rto << 1)
             self._timer_enabled = True
             self._time_elapsed = 0
+            self._consecutive_retransmissions += 1
 
     def shutdown_write(self):
         self._stream_in.end_input()
