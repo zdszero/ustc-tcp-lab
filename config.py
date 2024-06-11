@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 ENABLED_CHANNELS = [
+    'FSM'
 ]
 
 @dataclass

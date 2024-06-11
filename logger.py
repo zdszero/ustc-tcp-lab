@@ -30,24 +30,28 @@ STYLES = {
 START_TIME = time.time()
 
 
-def log(channel: str, message: str, inspect_depth: int = 1):
+def log(channel: str, message: str, inspect_depth: int = 0):
     if not __debug__:
         return
+    output = ''
     if channel in ENABLED_CHANNELS:
-        frame_info = inspect.stack()[inspect_depth]
-        caller_class = frame_info.frame.f_locals["self"].__class__.__name__
-        caller_method = frame_info.function
-        caller_info = f"{caller_class}.{caller_method}"
-        output = (
-            f" <g>{(time.time() - START_TIME):07.02f}</> | "
-            f"<b>{channel.upper():7}</> | <c>{caller_info}</> | "
-            f"{message}"
-        )
+        if inspect_depth > 0:
+            frame_info = inspect.stack()[inspect_depth]
+            caller_class = frame_info.frame.f_locals["self"].__class__.__name__
+            caller_method = frame_info.function
+            caller_info = f"{caller_class}.{caller_method}"
+            output = (
+                f" <g>{(time.time() - START_TIME):07.02f}</> | "
+                f"<b>{channel.upper():7}</> | <c>{caller_info}</> | "
+                f"{message}"
+            )
+        else:
+            output = (
+                f" <g>{(time.time() - START_TIME):07.02f}</> | "
+                f"<b>{channel.upper():7}</> | {message}"
+            )
     else:
-        output = (
-            f" <g>{(time.time() - START_TIME):07.02f}</> | "
-            f"<b>{channel.upper():7}</> | {message}"
-        )
+        return
 
     for key, value in STYLES.items():
         output = output.replace(key, value)
