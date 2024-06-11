@@ -1,6 +1,7 @@
 import unittest
 from stream_reassembler import StreamReassembler
 
+import random
 
 class TestReassembler(unittest.TestCase):
     def checkBuffer(self, reassembler: StreamReassembler, index: int, data: bytes, eof: bool, buffer: list):
@@ -72,6 +73,143 @@ class TestReassembler(unittest.TestCase):
         self.checkBuffer(reassembler, 10, b'0123456', False, [])
         self.assertEqual(reassembler.stream_out.size, 10)
         self.assertEqual(reassembler.stream_out.read(10), b'3456789012')
+
+    def test_capacity(self):
+        reassembler = StreamReassembler(3)
+        for i in range(0, 9997, 3):
+            segment = "".join(
+                [chr(i), chr(i + 1), chr(i + 2), chr(i + 13), chr(i + 47), chr(i + 9)]
+            )
+            segment = segment.encode()
+            reassembler.data_received(i, segment, False)
+            self.assertEqual(reassembler.assembled_bytes, i + 3)
+            self.expectData(reassembler, segment[:3])
+
+    def test_duplicate(self):
+        reassembler = StreamReassembler(65000)
+        self.checkBuffer(reassembler, 0, b"abcdefgh", False, [])
+        self.assertEqual(reassembler.assembled_bytes, 8)
+        self.expectData(reassembler, b"abcdefgh")
+        self.assertEqual(reassembler._eof, False)
+        data = b"abcdefgh"
+        for i in range(1000):
+            start_i = random.randint(0, 8)
+            start = start_i
+            end_i = random.randint(start_i, 8)
+            end = end_i
+            reassembler.data_received(start_i, data[start:end], False)
+            self.assertEqual(reassembler.assembled_bytes, 8)
+            self.expectData(reassembler, b"")
+            self.assertEqual(reassembler._eof, False)
+
+    def test_many_refill_before_close(self):
+        MAX_SEG_LEN = 2048
+        NSEGS = 128
+        NREPS = 32
+
+        for _ in range(NREPS):
+            reassembler = StreamReassembler(MAX_SEG_LEN * NSEGS)
+            seq_size = []
+            offset = 0
+            for i in range(NSEGS):
+                size = 1 + random.randint(0, MAX_SEG_LEN - 1)
+                seq_size.append((offset, size))
+                offset += size
+            random.shuffle(seq_size)
+
+            d = bytearray(offset)
+            for i in range(offset):
+                d[i] = random.randint(0, 255)
+
+            for off, sz in seq_size:
+                reassembler.data_received(off, d[off : off + sz], off + sz == offset)
+
+            result = reassembler.stream_out.read(reassembler.stream_out.size)
+            self.assertEqual(reassembler.assembled_bytes, offset)
+            self.assertEqual(result, d)
+
+    def test_many_insert_EOF_into_a_hole(self):
+        NREPS = 32
+        for _ in range(NREPS):
+            reassembler = StreamReassembler(65000)
+
+            size = 1024
+            d = bytearray(size)
+            for i in range(size):
+                d[i] = random.randint(0, 255)
+            reassembler.data_received(0, d, False)
+            reassembler.data_received(size + 10, d[10:], False)
+
+            res1 = reassembler.stream_out.read(reassembler.stream_out.size)
+            self.assertEqual(reassembler.assembled_bytes, size)
+            self.assertEqual(res1, d)
+
+            reassembler.data_received(size, d[:7], False)
+            reassembler.data_received(size + 7, d[7:8], True)
+            self.expectData(reassembler, d[:8])
+            self.assertEqual(reassembler.assembled_bytes, size + 8)
+
+    def test_many_insert_EOF_over_pre_queue(self):
+        NREPS = 32
+        for _ in range(NREPS):
+            reassembler = StreamReassembler(65000)
+
+            size = 1024
+            d = bytearray(size)
+            for i in range(size):
+                d[i] = random.randint(0, 255)
+            reassembler.data_received(0, d, False)
+            reassembler.data_received(size + 10, d[10:], False)
+
+            res1 = reassembler.stream_out.read(reassembler.stream_out.size)
+            self.assertEqual(reassembler.assembled_bytes, size)
+            self.assertEqual(res1, d)
+
+            reassembler.data_received(size, d[0:15], True)
+            res2 = reassembler.stream_out.read(reassembler.stream_out.size)
+            self.assertEqual(
+                reassembler.assembled_bytes == 2 * size
+                or reassembler.assembled_bytes == size + 10,
+                True,
+            )
+            self.assertEqual(res2, d)
+
+    def test_seq(self):
+        reassembler = StreamReassembler(65000)
+        ss = ""
+        for i in range(100):
+            self.assertEqual(reassembler.assembled_bytes, 4 * i)
+            self.checkBuffer(reassembler, 4 * i, b"abcd", False, [])
+            self.assertEqual(reassembler.finished, False)
+            ss += b"abcd".decode()
+        self.expectData(reassembler, ss.encode())
+
+    def test_win(self):
+        MAX_SEG_LEN = 2048
+        NSEGS = 128
+        NREPS = 32
+        # overlapping segments
+        for _ in range(NREPS):
+            reassembler = StreamReassembler(MAX_SEG_LEN * NSEGS)
+            seq_size = []
+            offset = 0
+            for i in range(NSEGS):
+                size = 1 + (random.randint(0, MAX_SEG_LEN - 1))
+                offs = min(offset, 1 + (random.randint(0, 1023)))
+                seq_size.append((offset - offs, size + offs))
+                offset += size
+            random.shuffle(seq_size)
+
+            d = bytearray(offset)
+            for i in range(offset):
+                d[i] = random.randint(0, 255)
+
+            for off, sz in seq_size:
+                reassembler.data_received(off, d[off : off + sz], off + sz == offset)
+
+            result = reassembler.stream_out.read(reassembler.stream_out.size)
+            self.assertEqual(reassembler.assembled_bytes, offset)
+            self.assertEqual(result, d)
 
 
 if __name__ == '__main__':
