@@ -165,7 +165,7 @@ class SenderClose(SenderTestBase):
         self.expectSegment(conn, fin=True, seqno=sender_isn+1)
         self.expectNoSegment(conn)
         self.assertEqual(conn.state, TcpState.FIN_WAIT_1)
-        conn.segment_received(TcpSegment(TcpHeader(fin=True, ack=True, ackno=sender_isn+2)))
+        conn.segment_received(TcpSegment(TcpHeader(fin=True, seqno=receiver_isn+1)))
         self.assertEqual(conn.state, TcpState.CLOSING)
 
 class SenderTransmit(SenderTestBase):

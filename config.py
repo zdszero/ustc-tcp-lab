@@ -19,6 +19,8 @@ class TcpConfig:
     recv_capacity = DEFAULT_CAPACITY
     send_capacity = DEFAULT_CAPACITY
 
+    MSL = 1000 * 120
+
 
 @dataclass
 class FdAdapterConfig:

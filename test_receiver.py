@@ -24,6 +24,7 @@ class TcpTestBase(unittest.TestCase):
         self,
         conn: TcpConnection,
         no_flags: bool = False,
+        rst: Optional[bool] = None,
         syn: Optional[bool] = None,
         ack: Optional[bool] = None,
         fin: Optional[bool] = None,
@@ -56,6 +57,7 @@ class TcpTestBase(unittest.TestCase):
             self.assertEqual(len(seg.payload), payload_size)
         if payload is not None:
             self.assertEqual(seg.payload, payload)
+        return seg
 
 
 class ReceiverTestBase(TcpTestBase):
@@ -83,7 +85,7 @@ class ReceiverTestBase(TcpTestBase):
         self.assertEqual(conn.state, TcpState.SYN_RECEIVED)
         self.expectSegment(conn, syn=True, seqno=isn, ack=True, ackno=uint32_plus(isn, 1))
         conn.segment_received(TcpSegment(
-            TcpHeader(syn=True, ack=True, seqno=uint32_plus(isn, 1), ackno=uint32_plus(isn, 1))))
+            TcpHeader(ack=True, seqno=uint32_plus(isn, 1), ackno=uint32_plus(isn, 1),win=10)))
         self.assertEqual(conn.state, TcpState.ESTABLISHED)
         self.assertEqual(conn.ackno, uint32_plus(isn, 1))
         return conn
@@ -92,22 +94,23 @@ class ReceiverTestBase(TcpTestBase):
 class TestReceiverConnect(ReceiverTestBase):
 
     def three_way_handshake(self):
-        sender_isn, receiver_isn = 10000, 20000
-        conn = self.new_closed_connection(4000)
+        cfg = TcpConfig()
+        conn=TcpConnection(cfg)
         conn.set_listening()
         self.assertEqual(conn.state, TcpState.LISTEN)
+        isn=1000
         # first handshake
-        conn.segment_received(TcpSegment(TcpHeader(syn=True, seqno=receiver_isn)))
+        conn.segment_received(TcpSegment(TcpHeader(syn=True, seqno=isn)))
         # second handshake
-        self.expectSegment(conn, syn=True, ack=True, seqno=sender_isn, ackno=receiver_isn+1)
+        seg=self.expectSegment(conn, syn=True, ack=True, ackno=isn+1)
         self.assertEqual(conn.state, TcpState.SYN_RECEIVED)
         self.assertEqual(conn.assembled_bytes, 0)
         self.assertEqual(conn.unassembled_bytes, 0)
         # wrong third handshake
-        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=sender_isn-1)))
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=seg.header.seqno-1,seqno=isn+1)))
         self.assertEqual(conn.state, TcpState.SYN_RECEIVED)
         # third handshake
-        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=sender_isn+1)))
+        conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=seg.header.seqno+1,seqno=isn+1)))
         self.assertEqual(conn.state, TcpState.ESTABLISHED)
 
 
@@ -241,33 +244,6 @@ class TestReceiverRecord(ReceiverTestBase):
 
 
 class TestReceiverClose(ReceiverTestBase):
-    def test_last_ack(self):
-        isn = 10000
-        conn = self.new_eastablished_connection(4000, isn)
-        conn.segment_received(TcpSegment(
-            TcpHeader(fin=True, seqno=isn+1),
-            payload=b'12')
-        )
-        conn.inbound_stream.end_input()
-        conn.segment_received(TcpSegment(TcpHeader(fin=True)))
-        self.assertEqual(conn.state, TcpState.LAST_ACK)
-
-    def test_last_ack2(self):
-        """
-        At first there is some data not received before fin,
-        then the data is received.
-        """
-        isn = 10000
-        conn = self.new_eastablished_connection(4000, isn)
-        self.assertEqual(conn.state, TcpState.ESTABLISHED)
-        conn.segment_received(TcpSegment(
-            TcpHeader(seqno=isn+3, fin=True), payload=b'3456'))
-        self.assertEqual(conn.state, TcpState.CLOSE_WAIT)
-        conn.inbound_stream.end_input()
-        conn.segment_received(TcpSegment(
-            TcpHeader(seqno=isn+1), payload=b'12'))
-        self.assertEqual(conn.state, TcpState.LAST_ACK)
-
     def test_closed(self):
         """
         At first there is some data not received before fin,
@@ -277,11 +253,17 @@ class TestReceiverClose(ReceiverTestBase):
         conn = self.new_eastablished_connection(4000, isn)
         self.assertEqual(conn.state, TcpState.ESTABLISHED)
         conn.segment_received(TcpSegment(
-            TcpHeader(seqno=isn+3, fin=True), payload=b'3456'))
+            TcpHeader(seqno=isn+2, fin=True, win=10), payload=b'b'))
+        self.expectSegment(conn, ack=True, ackno=isn+1)
+        self.expectBytes(conn, b'')
+        self.assertEqual(conn._reassembler.unassembled_bytes, 1)
         self.assertEqual(conn.state, TcpState.CLOSE_WAIT)
-        conn.inbound_stream.end_input()
-        conn.segment_received(TcpSegment(
-            TcpHeader(seqno=isn+1), payload=b'12'))
+        conn.segment_received(TcpSegment(TcpHeader(seqno=isn+1, win=10), payload=b'a'))
+        self.expectSegment(conn, ack=True, ackno=isn+4)
+        self.expectBytes(conn, b'ab')
+        self.assertEqual(conn.unassembled_bytes, 0)
+        conn.shutdown_write()
+        sge=self.expectSegment(conn, fin=True)
         self.assertEqual(conn.state, TcpState.LAST_ACK)
         conn.segment_received(TcpSegment(TcpHeader(ack=True, ackno=isn+2)))
         self.assertEqual(conn.state, TcpState.CLOSED)
