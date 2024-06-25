@@ -42,7 +42,6 @@ def tcp_checksum(src_ip: str, dst_ip: str, tcp_header: bytes, tcp_data: bytes):
 
 
 class TcpHeader:
-    LENGTH = 20
     def __init__(
         self,
         sport = 0,

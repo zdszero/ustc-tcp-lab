@@ -24,10 +24,10 @@ class TcpConfig:
 
 @dataclass
 class FdAdapterConfig:
-    sport: int
-    dport: int
-    saddr: str
-    daddr: str
+    sport: int = 0
+    dport: int = 0
+    saddr: str = '0.0.0.0'
+    daddr: str = '0.0.0.0'
 
     loss_rate_dn: int = 0
     loss_rate_up: int = 0
