@@ -7,7 +7,7 @@ import socket
 
 from config import TcpConfig
 from tcp_connection import TcpConnection
-from tcp_segment import TcpHeader, TcpSegment
+from tcp_segment import TCP_HEADER_LENGTH, TcpHeader, TcpSegment
 from utils import UINT32_MAX, uint32_plus
 from test_sender import SenderTestBase
 from tcp_state import TcpState
@@ -49,7 +49,7 @@ class FsmTestBase(SenderTestBase):
         payload: Optional[bytes] = None
     ) -> TcpSegment:
         self.assertTrue(self.canRead())
-        data = self.r_sock.recv(payload_size + TcpHeader.LENGTH)
+        data = self.r_sock.recv(payload_size + TCP_HEADER_LENGTH)
         seg = TcpSegment.deserialize(data)
         assert seg
         if no_flags:

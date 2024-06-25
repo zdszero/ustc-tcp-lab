@@ -50,8 +50,7 @@ class TcpConnection:
             raise RuntimeError(
                 'tcp state is not closed when calling connect()')
         self._send_segment(TcpSegment(TcpHeader(
-            syn=True,
-            seqno=self._sender_isn
+            syn=True
         )))
         self._state = TcpState.SYN_SENT
 
@@ -108,8 +107,7 @@ class TcpConnection:
         self._send_segment(TcpSegment(TcpHeader(
             syn=True,
             ack=True,
-            ackno=uint32_plus(seg.header.seqno),
-            seqno=self._sender_isn
+            ackno=uint32_plus(seg.header.seqno)
         )))
         self._state = TcpState.SYN_RECEIVED
 
@@ -309,6 +307,7 @@ class TcpConnection:
         self,
         seg: TcpSegment,
     ):
+        seg.header.seqno = self.next_seqno
         self._next_seqno_absolute += seg.length_in_sequence_space
         seg.header.win = self.window_size
         self._segments_out.append(seg)
@@ -318,6 +317,7 @@ class TcpConnection:
             self._timer_enabled = True
             self._time_elapsed = 0
         seg_attrs = []
+        # LOG
         if seg.header.syn:
             seg_attrs.append('syn=1')
         if seg.header.fin:
@@ -382,19 +382,16 @@ class TcpConnection:
                 if self._state == TcpState.FIN_WAIT_1:
                     self._next_seqno_absolute -=1 #将上次的FIN重传，占位更新
                     self._send_segment(TcpSegment(TcpHeader(
-                        fin=True,
-                        seqno=self.next_seqno
+                        fin=True
                     )))
                 elif self._state == TcpState.LAST_ACK:
                     self._next_seqno_absolute -=1
                     self._send_segment(TcpSegment(TcpHeader(
-                        fin=True,
-                        seqno=self.next_seqno
+                        fin=True
                     )))
                 elif self._state == TcpState.SYN_SENT:
                     self._send_segment(TcpSegment(TcpHeader(
-                        syn=True,
-                        seqno=self._sender_isn
+                        syn=True
                     )))
             else:
                 self._segments_out.append(self._outgoing_segments[0])
