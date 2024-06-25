@@ -29,6 +29,21 @@ class TestSegment(unittest.TestCase):
                 self.assertEqual(v, seg2.header.__dict__[f])
             self.assertEqual(seg.payload, seg2.payload)
 
+    def test_checksum(self):
+        seg = TcpSegment(
+            TcpHeader(
+                syn=True,
+                sport=30732,
+                dport=80,
+                seqno=4101019787
+            ),
+            b'',
+            src_ip = '192.0.2.2',
+            dst_ip = '34.194.149.67'
+        )
+        seg.serialize()
+        self.assertEqual(seg.header.cksum, 0x3082)
+
 
 class TestIPv4(unittest.TestCase):
     def test_same_datagram(self):

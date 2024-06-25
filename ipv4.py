@@ -133,7 +133,6 @@ class IPv4Datagram:
 
     def serialize(self):
         self.header.length = IPv4Header.HEADER_LENGTH + len(self.payload)
-        print(f'total length = {self.header.length}')
         return self.header.serialize() + self.payload
 
     @classmethod
@@ -141,9 +140,7 @@ class IPv4Datagram:
         if len(data) < IPv4Header.HEADER_LENGTH:
             return None
         hdr = IPv4Header.deserialize(data[:IPv4Header.HEADER_LENGTH])
-        print(hdr)
         payload = data[IPv4Header.HEADER_LENGTH:]
-        print(hdr.payload_len, len(payload))
         if hdr.payload_len != len(payload):
             return None
         return cls(hdr, payload)

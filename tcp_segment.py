@@ -171,7 +171,6 @@ class TcpSegment:
         if not header:
             return None
         payload = data[TCP_HEADER_LENGTH:]
-        # print(f'payload = {payload}')
         seg = cls(header, payload, src_ip, dst_ip)
         return seg
 

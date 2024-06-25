@@ -74,6 +74,8 @@ class TcpOverIpv4OverTunAdapter(FdAdapterBase):
     def write(self, seg: TcpSegment):
         seg.header.sport = self.config.sport
         seg.header.dport = self.config.dport
+        seg.src_ip = self.config.saddr
+        seg.dst_ip = self.config.daddr
         ip_dgram = IPv4Datagram(
             IPv4Header(
                 src_ip = self.config.saddr,
@@ -81,5 +83,4 @@ class TcpOverIpv4OverTunAdapter(FdAdapterBase):
             ),
             seg.serialize()
         )
-        print(repr(ip_dgram.serialize()))
         os.write(self.tun, ip_dgram.serialize())
