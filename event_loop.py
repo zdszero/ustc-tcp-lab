@@ -1,11 +1,14 @@
-import selectors
+import os
+import select
 from typing import Callable
 
+
+READ_EVENT = select.EPOLLIN
+WRITE_EVENT = select.EPOLLOUT
 
 class Rule:
     def __init__(
         self,
-        direction: int,
         callback: Callable,
         interest: Callable[[], bool] = lambda: True,
         cancel: Callable = lambda: None,
@@ -16,7 +19,6 @@ class Rule:
         interest: the conditoin wheather or not fileobj should be selected
         cancel: called when fileobj is unregistered
         """
-        self.direction = direction
         self.callback = callback
         self.interest = interest
         self.cancel = cancel
@@ -24,8 +26,10 @@ class Rule:
 
 class EventLoop:
     def __init__(self):
-        self.selector = selectors.DefaultSelector()
-        self.rules = {}
+        self.read_rules = {}
+        self.rlist = []
+        self.write_rules = {}
+        self.wlist = []
 
     def add_rule(
         self,
@@ -35,40 +39,72 @@ class EventLoop:
         interest: Callable[[], bool] = lambda: True,
         cancel: Callable = lambda: None,
     ):
-        self.rules[fileobj] = Rule(direction, callback, interest, cancel)
-        self.selector.register(fileobj, direction)
+        if direction == READ_EVENT:
+            self.read_rules[fileobj] = Rule(callback, interest, cancel)
+            self.rlist.append(fileobj)
+        elif direction == WRITE_EVENT:
+            self.write_rules[fileobj] = Rule(callback, interest, cancel)
+            self.wlist.append(fileobj)
+
+    def _check_closed(self, fileobj) -> bool:
+        if isinstance(fileobj, int):
+            fd = fileobj
+        else:
+            try:
+                fd = int(fileobj.fileno())
+            except (AttributeError, TypeError, ValueError):
+                raise ValueError("Invalid file object: "
+                                 "{!r}".format(fileobj)) from None
+        try:
+            os.fstat(fd)
+        except OSError:
+            return True
+        return False
 
     def wait_next_event(self, timeout_ms: int) -> bool:
-        something_interested = False
         closed_fileobjs = []
-        for fileobj, rule in self.rules.items():
-            if fileobj.closed:
+        for fileobj in set(self.rlist + self.wlist):
+            if self._check_closed(fileobj):
                 closed_fileobjs.append(fileobj)
-                continue
+
+        something_interested = False
+        for rule in self.read_rules.values():
+            if rule.interest and rule.interest():
+                something_interested = True
+        for rule in self.write_rules.values():
             if rule.interest and rule.interest():
                 something_interested = True
 
         # unregister closed events
         for fileobj in closed_fileobjs:
-            self.rules[fileobj].cancel()
-            self.selector.unregister(fileobj)
-            self.rules.pop(fileobj)
+            if fileobj in self.write_rules:
+                self.write_rules[fileobj].cancel()
+                self.write_rules.pop(fileobj)
+            if fileobj in self.read_rules:
+                self.read_rules[fileobj].cancel()
+                self.read_rules.pop(fileobj)
 
         # exit when not interested in any event
         if not something_interested:
             return False
 
-        events = self.selector.select(timeout=timeout_ms / 1000)
-        if not events:
+        readable, writeable, _ = select.select(self.rlist, self.wlist, [], timeout_ms / 1000)
+        if not readable or not writeable:
             return False
-        for key, mask in events:
-            fileobj = key.fileobj
-            interest = self.rules[fileobj].interest
-            callback = self.rules[fileobj].callback
-            if fileobj.closed:
+        for fileobj in readable:
+            interest = self.read_rules[fileobj].interest
+            callback = self.read_rules[fileobj].callback
+            if self._check_closed(fileobj):
                 continue
             if interest and not interest():
                 continue
-            # trigger callback when interested and not closed
+            callback()
+        for fileobj in writeable:
+            interest = self.write_rules[fileobj].interest
+            callback = self.write_rules[fileobj].callback
+            if self._check_closed(fileobj):
+                continue
+            if interest and not interest():
+                continue
             callback()
         return True

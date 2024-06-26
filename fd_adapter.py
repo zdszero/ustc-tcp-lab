@@ -2,19 +2,35 @@ import struct
 import fcntl
 import struct
 import os
+from abc import ABC, abstractmethod
 from typing import Optional
 
 from config import FdAdapterConfig
 from tcp_segment import TcpSegment
 from ipv4 import IPv4Datagram, IPv4Header
 
-class FdAdapterBase:
+class FdAdapter(ABC):
     def __init__(self):
-        self.config = FdAdapterConfig()
+        self.config: Optional[FdAdapterConfig] = None
         self.listening = False
 
+    @abstractmethod
+    def read(self) -> Optional[TcpSegment]:
+        pass
 
-class TcpOverUdpAdapter(FdAdapterBase):
+    @abstractmethod
+    def write(self, seg: TcpSegment):
+        pass
+
+    @abstractmethod
+    def fileno(self) -> int:
+        pass
+
+    def tick(self, ms_since_last: int):
+        pass
+
+
+class TcpOverUdpAdapter(FdAdapter):
     pass
 
 
@@ -25,7 +41,7 @@ IFF_TAP = 0x0002
 IFF_NO_PI = 0x1000
 
 
-class TcpOverIpv4OverTunAdapter(FdAdapterBase):
+class TcpOverIpv4OverTunAdapter(FdAdapter):
     def __init__(self, ifname: str):
         super().__init__()
         try:
@@ -42,6 +58,7 @@ class TcpOverIpv4OverTunAdapter(FdAdapterBase):
             raise
 
     def read(self) -> Optional[TcpSegment]:
+        assert self.config
         recv_data = os.read(self.tun, 65535)
         ip_dgram = IPv4Datagram.deserialize(recv_data)
         if not ip_dgram:
@@ -72,6 +89,7 @@ class TcpOverIpv4OverTunAdapter(FdAdapterBase):
         return seg
 
     def write(self, seg: TcpSegment):
+        assert self.config
         seg.header.sport = self.config.sport
         seg.header.dport = self.config.dport
         seg.src_ip = self.config.saddr
@@ -84,3 +102,6 @@ class TcpOverIpv4OverTunAdapter(FdAdapterBase):
             seg.serialize()
         )
         os.write(self.tun, ip_dgram.serialize())
+
+    def fileno(self) -> int:
+        return self.tun

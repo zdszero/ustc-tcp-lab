@@ -1,19 +1,21 @@
 import selectors
 from typing import Callable
-from threading import Thread, Optional
+from threading import Thread
+from typing import Optional
+import io
 
 from event_loop import EventLoop
 from tcp_connection import TcpConnection
 from tcp_state import TcpState
 from config import TcpConfig, FdAdapterConfig
+from fd_adapter import FdAdapter
 from utils import timestamp_ms
 
 TCP_TICK_MS = 10
 
-
 class TcpSocket:
-    def __init__(self, thread_data, datagram_adapater):
-        self.thread_data = thread_data
+    def __init__(self, datagram_adapater: FdAdapter):
+        self.thread_data = io.BytesIO()
         self._adapter = datagram_adapater
         self._loop = EventLoop()
         self._abort = False
@@ -28,6 +30,7 @@ class TcpSocket:
         self.fully_acked = False
 
     def connect(self, adapter_cfg: FdAdapterConfig):
+        self._adapter.config = adapter_cfg
         self._init_tcp()
         self._tcp.connect()
         if self._tcp._state != TcpState.SYN_SENT:
@@ -61,8 +64,10 @@ class TcpSocket:
                 base_time = next_time
 
     def _init_tcp(self):
-        # 第1种情形：
-        # 当适配器有数据可读时（即tcp peer发送segment到达本机），将segment放入tcp接收窗口中
+        """
+        Condition 1: adapter is readable
+            receive segment from peer
+        """
         assert self._tcp
         def on_adapter_readable():
             seg = self._adapter.read()
@@ -77,25 +82,24 @@ class TcpSocket:
             interest=lambda: self._tcp.active
         )
 
-        # 第2种情形：
-        # 当适配器有写入空间时，从tcp流中取出segment进行发送
+        """
+        Condition 2: adapter is writable
+            write available segments
+        """
         def on_adapter_writable():
             while self._tcp.segments_out:
                 self._adapter.write(self._tcp.segments_out.popleft())
-
-        # 条件是tcp的待发送segments不为空
-        def adapter_write_interest() -> bool:
-            return len(self._tcp.segments_out) > 0
-
         self._loop.add_rule(
             self._adapter,
             selectors.EVENT_WRITE,
             callback=on_adapter_writable,
-            interest=adapter_write_interest
+            interest=lambda: len(self._tcp._segments_out) > 0
         )
 
-        # 第3种情形：
-        # 当应用层有数据到达时，将这些数据写入tcp流中
+        """
+        Condition 3: thread is readable
+            read data from thread and write these data into tcp
+        """
         def on_thread_readable():
             remaining_capacity = self._tcp.inbound_stream.remaining_capacity
             data = self.thread_data.read(remaining_capacity)
@@ -104,26 +108,28 @@ class TcpSocket:
                 raise RuntimeError(
                     'TcpConnection.write() accept less than advertised length')
             if self.thread_data.closed:
-                self._tcp.end_input_stream()
+                self._tcp.shutdown_write()
                 self.outbound_shutdown = True
 
-        def thread_read_interest() -> bool:
-            return self._tcp.active and not self.outbound_shutdown and self._tcp.inbound_stream.remaining_capacity > 0
-
         def thread_read_cancelled():
-            self._tcp.end_input_stream()
+            self._tcp.shutdown_write()
             self.outbound_shutdown = True
 
         self._loop.add_rule(
             self.thread_data,
             selectors.EVENT_READ,
             callback=on_thread_readable,
-            interest=thread_read_interest,
+            interest=lambda: (
+                self._tcp.active and
+                not self.outbound_shutdown and
+                self._tcp.inbound_stream.remaining_capacity > 0
+            ),
             cancel=thread_read_cancelled
         )
 
-        # 第4种情形：
-        # 当应用层可以读取数据时，从tcp接收缓冲区读取数据
+        """
+        Condition 4: thread is writable
+        """
         def on_thread_writable():
             inbound = self._tcp.inbound_stream
             amount_to_write = min(65535, inbound.size)
@@ -131,10 +137,9 @@ class TcpSocket:
             bytes_written = self.thread_data.write(buf)
             inbound.pop_output(bytes_written)
             if inbound.error or inbound.eof:
-                self.thread_data.shutdown(SHUT_WR)
+                self.thread_data.close()
                 self.inbound_shutdown = True
 
-        # 条件是tcp输入缓冲区有数据、没有错误、输入没有被关闭
         def thread_write_interest():
             inbound = self._tcp.inbound_stream
             return inbound.size > 0 and not inbound.eof and not inbound.error and not self.inbound_shutdown
