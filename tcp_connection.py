@@ -119,6 +119,13 @@ class TcpConnection:
             seg.header.ackno == expected_ackno
         ):
             return
+        seg_attrs=[]
+        seg_attrs.append('syn=1')
+        seg_attrs.append('ack=1')
+        seg_attrs.append(f'ackno={seg.header.ackno}')
+        seg_attrs.append(f'seqno={seg.header.seqno}')
+        log('FSM','receive segment with '+','.join(seg_attrs))
+        
         self._receiver_isn = seg.header.seqno
         self._send_segment(TcpSegment(TcpHeader(
             ack=True,
@@ -325,6 +332,8 @@ class TcpConnection:
         if seg.header.ack:
             seg_attrs.append('ack=1')
             seg_attrs.append(f'ackno={self.ackno}')
+        if seg.header.seqno:
+            seg_attrs.append(f'seqno={seg.header.seqno}')
         if len(seg.payload) > 0:
             seg_attrs.append(f'payload_len={len(seg.payload)}')
         log('FSM', 'send segment with ' + ','.join(seg_attrs))

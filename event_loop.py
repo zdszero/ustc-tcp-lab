@@ -1,10 +1,10 @@
 import os
 import select
 from typing import Callable
-
-
-READ_EVENT = select.EPOLLIN
-WRITE_EVENT = select.EPOLLOUT
+import selectors
+import time
+READ_EVENT = selectors.EVENT_READ
+WRITE_EVENT = selectors.EVENT_WRITE
 
 class Rule:
     def __init__(
@@ -87,9 +87,11 @@ class EventLoop:
         # exit when not interested in any event
         if not something_interested:
             return False
-
+        
         readable, writeable, _ = select.select(self.rlist, self.wlist, [], timeout_ms / 1000)
-        if not readable or not writeable:
+
+        something_interested = False
+        if not readable and not writeable:
             return False
         for fileobj in readable:
             interest = self.read_rules[fileobj].interest
@@ -98,13 +100,27 @@ class EventLoop:
                 continue
             if interest and not interest():
                 continue
+            something_interested=True
             callback()
         for fileobj in writeable:
             interest = self.write_rules[fileobj].interest
             callback = self.write_rules[fileobj].callback
+            # print("interst:"+str(interest)+"interst():"+str(interest()))
             if self._check_closed(fileobj):
                 continue
             if interest and not interest():
                 continue
+            something_interested=True
             callback()
+
+        # print("something_interested :"+str(something_interested))
+        # print("closed_fileobjs:"+",".join(closed_fileobjs))
+        # print("rlist",end=':')
+        # print(self.rlist)
+        # print("wlist",end=':')
+        # print(self.wlist)
+        # print("readable:"+str(readable)+" writeable:"+str(writeable))
+
+        if not something_interested:
+            return False
         return True

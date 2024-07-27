@@ -78,12 +78,15 @@ class TestTunAdapter(unittest.TestCase):
         t.join()
 
 
-# class TestSocket(unittest.TestCase):
-#     def test_socket(self):
-#         t = threading.Thread(target=tcp_server)
-#         t.start()
-#         s = TcpSocket(TcpOverIpv4OverTunAdapter("tun0"))
-#         s.connect(testcfg)
+class TestSocket(unittest.TestCase):
+    def test_socket(self):
+        t = threading.Thread(target=tcp_server)
+        t.start()
+        s = TcpSocket(TcpOverIpv4OverTunAdapter("tun0"))
+        s.connect(testcfg)
+        request = "GET / HTTP/1.1\r\nHost: {}\r\n\r\n".format('192.168.31.128')
+        s.write(request)
+        t.join()
 
 
 # class TestEventloop(unittest.TestCase):
