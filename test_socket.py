@@ -220,17 +220,5 @@ class TestSocket(unittest.TestCase):
         t.join()
 
 
-# class TestEventloop(unittest.TestCase):
-#     def test_basic(self):
-#         loop = EventLoop()
-#         r, w = socket.socketpair()
-#         loop.add_rule(r, READ_EVENT, lambda: print('readable'))
-#         loop.add_rule(w, WRITE_EVENT, lambda: print('writable'))
-#         w.send(b'12345')
-#         loop.wait_next_event(100)
-#         r.close()
-#         w.close()
-
-
 if __name__ == '__main__':
     unittest.main()
