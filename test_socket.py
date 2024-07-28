@@ -2,6 +2,7 @@ import socket
 import threading
 import unittest
 from config import FdAdapterConfig
+from libtypes import *
 from event_loop import *
 from tcp_segment import *
 from utils import *
@@ -62,24 +63,26 @@ testcfg = FdAdapterConfig(
 
 
 class TestTunAdapter(unittest.TestCase):
-    def test_tcp_over_ip_over_tun(self):
-        """
-        在测试前需要使用 ./tun.sh 0 创建一个 tun0 设备
-        tcp_server 函数中的真实 tcp 在当前机器的 IPv4 网段中（内网地址）
-        TunAdapterTcp 运行在 tun0 的虚拟网络的网段中
-        """
-        t = threading.Thread(target=tcp_server)
-        t.start()
+    """
+    在调用测试函数 test_* 前需要使用命令 ./tun.sh start 0 创建一个 tun0 设备
+    tcp_server 函数中的真实 tcp 在当前机器的 IPv4 网段中（内网地址）
+    TunAdapterTcp 运行在 tun0 的虚拟网络的网段中
+    """
+    def create_tun_adapter(self):
         adapter = TcpOverIpv4OverTunAdapter('tun0')
         adapter.config = testcfg
         adapter.listening = True
+        return adapter
 
+    def three_hand_shake(self,
+                         adapter: TcpOverIpv4OverTunAdapter,
+                         isn: int):
         # Write SYN segment
         adapter.write(TcpSegment(
             TcpHeader(
                 syn=True,
                 win=65535,
-                seqno=10000
+                seqno=isn
             )
         ))
         print("SYN segment written.")
@@ -87,10 +90,10 @@ class TestTunAdapter(unittest.TestCase):
         # Read SYN-ACK segment
         seg = adapter.read()
         self.assertIsNotNone(seg)
-        assert seg
+        assert seg # pyright check
         self.assertTrue(seg.header.syn)
         self.assertTrue(seg.header.ack)
-        self.assertEqual(seg.header.ackno, 10001)
+        self.assertEqual(seg.header.ackno, isn+1)
         print("SYN-ACK segment received.")
 
         # Write ACK segment
@@ -100,12 +103,46 @@ class TestTunAdapter(unittest.TestCase):
                 ack=True,
                 win=65535,
                 ackno=next_seqno,
-                seqno=10001
+                seqno=isn+1
             )
         ))
         print("ACK segment written.")
 
-        t.join()
+
+    def active_close(self,
+                    adapter: TcpOverIpv4OverTunAdapter,
+                    fin_seqno: int):
+        print('Send fin')
+        adapter.write(TcpSegment(
+            TcpHeader(
+                fin=True,
+                seqno=fin_seqno
+            )
+        ))
+        seg = adapter.read()
+        self.assertIsNotNone(seg)
+        assert seg
+        self.assertTrue(seg.header.ack)
+        self.assertTrue(seg.header.fin)
+        ackno = seg.header.seqno+1
+        adapter.write(
+            TcpSegment(
+                TcpHeader(
+                    ack=True,
+                    ackno=ackno,
+                    seqno=fin_seqno+1
+                )
+            )
+        )
+
+
+    def test_tcp_over_ip_over_tun(self):
+        t = threading.Thread(target=tcp_server)
+        t.start()
+
+        adapter = self.create_tun_adapter()
+        self.three_hand_shake(adapter, 10000)
+        self.active_close(adapter, 10002)
 
 
 class TestSocket(unittest.TestCase):
