@@ -2,12 +2,10 @@ import selectors
 from typing import Callable
 from threading import Thread
 from typing import Optional
-import io
 import os
 import random
-import select
 from logger import log
-from event_loop import EventLoop
+from event_loop import EventLoop, SocketPair
 from tcp_connection import TcpConnection
 from tcp_state import TcpState
 from config import TcpConfig, FdAdapterConfig
@@ -20,7 +18,7 @@ class TcpSocket:
     def __init__(self, datagram_adapater: FdAdapter):
         # self.thread_data = io.BytesIO()
         # r_fd,w_fd=os.pipe()
-        self.thread_data= os.pipe()
+        self.thread_data = SocketPair()
         self._adapter = datagram_adapater
         self._loop = EventLoop()
         self._abort = False
@@ -34,8 +32,7 @@ class TcpSocket:
         # has the outbound data fully acknowledged by the peer?
         self.fully_acked = False
 
-    def connect(self, adapter_cfg: FdAdapterConfig):
-        self._adapter.config = adapter_cfg
+    def connect(self):
         self._init_tcp()
         self._tcp.connect()
         if self._tcp._state != TcpState.SYN_SENT:
@@ -81,19 +78,12 @@ class TcpSocket:
         Condition 1: adapter is readable
             receive segment from peer
         """
-        def is_fd_closed(fd):
-            try:
-                os.fstat(fd)
-                return False
-            except OSError:
-                return True
-                
         assert self._tcp
         def on_adapter_readable():
             seg = self._adapter.read()
             if seg:
                 self._tcp.segment_received(seg)
-            if is_fd_closed(self.thread_data[1]) and self._tcp.bytes_in_flight == 0 and not self.fully_acked:
+            if self.thread_data.closed and self._tcp.bytes_in_flight == 0 and not self.fully_acked:
                 self.fully_acked = True
             log("FSM","adapter -> tcp")
         self._loop.add_rule(
@@ -125,14 +115,13 @@ class TcpSocket:
         def on_thread_readable():
             remaining_capacity = self._tcp.inbound_stream.remaining_capacity
             # data = self.thread_data.read(remaining_capacity)
-            data=os.read(self.thread_data[0],remaining_capacity)
+            data = self.thread_data.recv(remaining_capacity)
             amount_written = self._tcp.write(data)
             log("FSM","thread -> tcp")
             if amount_written != len(data):
                 raise RuntimeError(
                     'TcpConnection.write() accept less than advertised length')
-            # if self.thread_data.closed:
-            if is_fd_closed(self.thread_data[1]):
+            if self.thread_data.closed:
                 self._tcp.shutdown_write()
                 self.outbound_shutdown = True
 
@@ -141,7 +130,7 @@ class TcpSocket:
             self.outbound_shutdown = True
 
         self._loop.add_rule(
-            self.thread_data[0],
+            self.thread_data,
             selectors.EVENT_READ,
             callback=on_thread_readable,
             interest=lambda: (
@@ -156,35 +145,32 @@ class TcpSocket:
         Condition 4: thread is writable
         """
         def on_thread_writable():
-            inbound = self._tcp.inbound_stream
-            amount_to_write = min(65535, inbound.size)
-            buf = inbound.peek_output(amount_to_write)
-            # bytes_written = self.thread_data.write(buf)
-            bytes_written=os.write(self.thread_data[1],buf)
-            inbound.pop_output(bytes_written)
+            outbound = self._tcp.outbound_stream
+            amount_to_write = min(65535, outbound.size)
+            buf = outbound.peek_output(amount_to_write)
+            bytes_written = self.thread_data.send(buf)
+            outbound.pop_output(bytes_written)
             log("FSM","tcp -> thread")
-            if inbound.error or inbound.eof:
-                # self.thread_data.close()
-                os.close(self.thread_data[1])
+            if outbound.error or outbound.eof:
+                self.thread_data.close()
                 self.inbound_shutdown = True
 
         def thread_write_interest():
-            inbound = self._tcp.inbound_stream
-            return inbound.size > 0 and not inbound.eof and not inbound.error and not self.inbound_shutdown
+            outbound = self._tcp.outbound_stream
+            return outbound.size > 0 and not outbound.eof and not outbound.error and not self.inbound_shutdown
 
         self._loop.add_rule(
-            self.thread_data[1],
+            self.thread_data,
             selectors.EVENT_WRITE,
             callback=on_thread_writable,
             interest=thread_write_interest
         )
 
-    def write(self,data_in:str):
-        os.write(self.thread_data[1],data_in.encode())
-        # print(f"--------write data into thread_data")
-        # readable, _, _ = select.select([self.thread_data[0]], [], [], 1)
-        # print(f'{readable[0]} is readable')
-        # print("----------")
+    def send(self, data: bytes):
+        self.thread_data.child_sock.send(data)
+
+    def recv(self, buf_size: int) -> bytes:
+        return self.thread_data.child_sock.recv(buf_size)
 
 class Address:
     def __init__(self, ip, port = 80):

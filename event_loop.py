@@ -1,8 +1,8 @@
 import os
+import socket
 import select
 from typing import Callable
 import selectors
-import time
 READ_EVENT = selectors.EVENT_READ
 WRITE_EVENT = selectors.EVENT_WRITE
 
@@ -124,3 +124,34 @@ class EventLoop:
         if not something_interested:
             return False
         return True
+
+
+class SocketPair:
+    def __init__(self):
+        self.parent_sock, self.child_sock = socket.socketpair()
+        self._closed = False
+
+    def fileno(self):
+        if self._closed:
+            raise ValueError("Socket is closed")
+        return self.parent_sock.fileno()
+
+    def recv(self, bufsize):
+        if self._closed:
+            raise ValueError("Socket is closed")
+        return self.parent_sock.recv(bufsize)
+
+    def send(self, data):
+        if self._closed:
+            raise ValueError("Socket is closed")
+        return self.parent_sock.send(data)
+
+    def close(self):
+        if not self._closed:
+            self.parent_sock.close()
+            self.child_sock.close()
+            self._closed = True
+
+    @property
+    def closed(self):
+        return self._closed

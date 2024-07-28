@@ -209,15 +209,38 @@ class TestTunAdapter(unittest.TestCase):
         self.active_close(adapter, 10016, peer_isn+16)
 
 
+class TestSocketEventLoop(unittest.TestCase):
+    def create_tun_adapter(self):
+        adapter = TcpOverIpv4OverTunAdapter('tun0')
+        adapter.config = testcfg
+        adapter.listening = True
+        return adapter
+
+    def test_eventloop(self):
+        adapter = self.create_tun_adapter()
+        mysock = TcpSocket(adapter)
+        mysock.send(b'12345')
+        # maybe sleep for some
+        # maybe create another tun device to check if tun0 has sent
+
+
 class TestSocket(unittest.TestCase):
+    def create_tun_adapter(self):
+        adapter = TcpOverIpv4OverTunAdapter('tun0')
+        # 配置 tun0 与 tcp server 通信
+        adapter.config = testcfg
+        adapter.listening = True
+        return adapter
+
     def test_socket(self):
         t = threading.Thread(target=tcp_echo_server)
         t.start()
-        s = TcpSocket(TcpOverIpv4OverTunAdapter("tun0"))
-        s.connect(testcfg)
-        request = "GET / HTTP/1.1\r\nHost: {}\r\n\r\n".format('192.168.31.128')
-        s.write(request)
-        t.join()
+        adapter = self.create_tun_adapter()
+        s = TcpSocket(adapter)
+        s.connect()
+        s.send(b'12345')
+        recv_data = s.recv(10)
+        self.assertEqual(recv_data, b'12345')
 
 
 if __name__ == '__main__':
