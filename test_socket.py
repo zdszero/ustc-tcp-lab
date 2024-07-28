@@ -1,5 +1,4 @@
 import socket
-import os
 import threading
 import unittest
 from config import FdAdapterConfig
@@ -9,10 +8,36 @@ from utils import *
 from fd_adapter import TcpOverIpv4OverTunAdapter
 from tcp_socket import TcpSocket
 
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # connect to remote tcp server to get local inet addr
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = "Unable to get IP address"
+    finally:
+        s.close()
+    return local_ip
+
+def find_free_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('', 0))  # 绑定到一个空闲的端口
+    s.listen(1)  # 使套接字处于监听状态
+    port = s.getsockname()[1]  # 获取分配的端口号
+    s.close()  # 关闭套接字
+    return port
+
+
+# 自动选择 IP地址 和 可用端口
+REAL_SOCK_IP = get_local_ip()
+REAL_SOCK_PORT = find_free_port()
+
 
 def tcp_server():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(('192.168.3.137', 65430))
+    # bind to local ip
+    s.bind((REAL_SOCK_IP, REAL_SOCK_PORT))
     s.listen()
     print("Server is listening...")
     s.settimeout(2)  # Add timeout to prevent hanging forever
@@ -31,13 +56,18 @@ def tcp_server():
 testcfg = FdAdapterConfig(
     saddr='169.254.0.9',
     sport=30732,
-    daddr='192.168.3.137',
-    dport=65430
+    daddr=REAL_SOCK_IP,
+    dport=REAL_SOCK_PORT
 )
 
 
 class TestTunAdapter(unittest.TestCase):
     def test_tcp_over_ip_over_tun(self):
+        """
+        在测试前需要使用 ./tun.sh 0 创建一个 tun0 设备
+        tcp_server 函数中的真实 tcp 在当前机器的 IPv4 网段中（内网地址）
+        TunAdapterTcp 运行在 tun0 的虚拟网络的网段中
+        """
         t = threading.Thread(target=tcp_server)
         t.start()
         adapter = TcpOverIpv4OverTunAdapter('tun0')
