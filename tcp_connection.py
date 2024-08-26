@@ -127,6 +127,7 @@ class TcpConnection:
         log('FSM','receive segment with '+','.join(seg_attrs))
         
         self._receiver_isn = seg.header.seqno
+        self._receiver_window_size = seg.header.win
         self._send_segment(TcpSegment(TcpHeader(
             ack=True,
             ackno=uint32_plus(seg.header.seqno, 1)
@@ -217,13 +218,33 @@ class TcpConnection:
         self._state = TcpState.CLOSED
 
     def _fsm_fin_wait_1(self, seg: TcpSegment):
-        if seg.header.fin:
+        seg_attrs=[]
+        if seg.header.fin and seg.header.ack:
+            expected_ackno = self._wrap_sender(self._next_seqno_absolute)
+            if not (
+                seg.header.ack and
+                seg.header.ackno == expected_ackno
+            ):
+                return
+            seg_attrs.append('fin=1')
+            seg_attrs.append('ack=1')
+            seg_attrs.append(f'ackno={seg.header.ackno}')
+            seg_attrs.append(f'seqno={seg.header.seqno}')
+            log('FSM','receive segment with '+','.join(seg_attrs))
+            self._fin_received = True
+            self._send_segment(TcpSegment(TcpHeader(
+                ack=True,
+                ackno=self.ackno
+            )))
+            self._state = TcpState.TIME_WAIT
+        elif seg.header.fin:
             self._state = TcpState.CLOSING
             self._fin_received = True
             self._send_segment(TcpSegment(TcpHeader(
                 ack=True,
                 ackno=self.ackno
             )))
+            log('FSM','receive segment with fin=1')
             return
         else:
             expected_ackno = self._wrap_sender(self._next_seqno_absolute)
@@ -232,6 +253,9 @@ class TcpConnection:
                 seg.header.ackno == expected_ackno
             ):
                 return
+            seg_attrs.append('ack=1')
+            seg_attrs.append(f'ackno={seg.header.seqno}')
+            log('FSM','receive segment with '+','.join(seg_attrs))
             self._state = TcpState.FIN_WAIT_2
 
     def _fsm_fin_wait_2(self, seg: TcpSegment):
@@ -247,6 +271,10 @@ class TcpConnection:
             )))
             self._state = TcpState.TIME_WAIT
             self._linger_after_stream_finish = True
+            seg_attrs=[]
+            seg_attrs.append('fin=1')
+            seg_attrs.append(f'seqno={seg.header.seqno}')
+            log('FSM','receive segment with '+','.join(seg_attrs))
 
     def _fsm_closing(self, seg: TcpSegment):
         expected_ackno = self._wrap_sender(self._next_seqno_absolute)
@@ -257,6 +285,10 @@ class TcpConnection:
             return
         self._state = TcpState.TIME_WAIT
         self._linger_after_stream_finish = True
+        seg_attrs=[]
+        seg_attrs.append('ack=1')
+        seg_attrs.append(f'ackno={seg.header.ackno}')
+        log('FSM','receive segment with '+','.join(seg_attrs))
 
     def _fsm_time_wait(self, seg: TcpSegment):
         if seg.header.fin:
@@ -359,7 +391,9 @@ class TcpConnection:
             payload = self._stream_in.read(payload_size)
             assert not self._stream_in.error
             seg = TcpSegment(TcpHeader(
-                seqno = self._wrap_sender(self._next_seqno_absolute)
+                ack = True,
+                seqno = self._wrap_sender(self._next_seqno_absolute),
+                ackno= self.ackno
             ), payload)
             send_size -= payload_size
             if self._stream_in.eof and send_size > 0:
