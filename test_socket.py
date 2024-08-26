@@ -241,7 +241,7 @@ class TestSocket(unittest.TestCase):
         s.send(b'12345')
         recv_data = s.recv(10)
         self.assertEqual(recv_data, b'12345')
-
+        s.close()
 
 if __name__ == '__main__':
     unittest.main()

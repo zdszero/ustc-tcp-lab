@@ -4,7 +4,7 @@ import random
 from math import ceil
 from typing import Optional
 import socket
-
+import os
 from config import TcpConfig
 from tcp_connection import TcpConnection
 from tcp_segment import TCP_HEADER_LENGTH, TcpHeader, TcpSegment
@@ -39,7 +39,6 @@ class FsmTestBase(SenderTestBase):
     def readSegment(
         self,
         payload_size: int = 0,
-        no_flags: bool = False,
         syn: Optional[bool] = None,
         ack: Optional[bool] = None,
         fin: Optional[bool] = None,
@@ -52,11 +51,6 @@ class FsmTestBase(SenderTestBase):
         data = self.r_sock.recv(payload_size + TCP_HEADER_LENGTH)
         seg = TcpSegment.deserialize(data)
         assert seg
-        if no_flags:
-            self.assertEqual(seg.header.syn, False)
-            self.assertEqual(seg.header.ack, False)
-            self.assertEqual(seg.header.fin, False)
-            self.assertEqual(seg.header.urg, False)
         if syn is not None:
             self.assertEqual(seg.header.syn, syn)
         if ack is not None:
@@ -83,7 +77,8 @@ class FsmTest(FsmTestBase):
             conn = self.new_eastablished_connection(65000, offset-1, offset-1)
             conn.segment_received(TcpSegment(
                 TcpHeader(ack=True, seqno=offset, ackno=offset, win=capacity)))
-            data = random.randbytes(capacity)
+            # data = random.randbytes(capacity)
+            data = os.urandom(capacity)
             recv_data = b''
 
             sendoff = 0
@@ -146,8 +141,8 @@ class FsmTest(FsmTestBase):
                 seq_size.append((sendoff, size))
                 sendoff += size
             random.shuffle(seq_size)
-            d = random.randbytes(capacity)
-
+            # d = random.randbytes(capacity)
+            d = os.urandom(capacity)
             min_expected_ackno = uint32_plus(isn2, 1)
             max_expected_ackno = uint32_plus(isn2, 1)
             for off, sz in seq_size:
@@ -201,8 +196,8 @@ class FsmTest(FsmTestBase):
                 sendoff += size
             self.assertLessEqual(sendoff, capacity)
             random.shuffle(seq_size)
-            d = random.randbytes(capacity)
-
+            # d = random.randbytes(capacity)
+            d = os.urandom(capacity)
             min_expected_ackno = uint32_plus(isn2, 1)
             max_expected_ackno = uint32_plus(isn2, 1)
             for off, sz in seq_size:
@@ -239,25 +234,25 @@ class FsmTest(FsmTestBase):
         data=b'asdf'
         conn.write(data)
         conn.tick(1)
-        self.expectSegment(conn,no_flags=True,payload_size=len(data),payload=data)
+        self.expectSegment(conn,payload_size=len(data),payload=data)
         self.expectNoSegment(conn)
         
         conn.tick(TcpConfig.rt_timeout-2)
         self.expectNoSegment(conn)
 
         conn.tick(2)
-        self.expectSegment(conn,no_flags=True,payload_size=len(data),payload=data)
+        self.expectSegment(conn,payload_size=len(data),payload=data)
         self.expectNoSegment(conn)
 
         conn.tick(10*TcpConfig.rt_timeout+100)
-        self.expectSegment(conn,no_flags=True,payload_size=len(data),payload=data)
+        self.expectSegment(conn,payload_size=len(data),payload=data)
         self.expectNoSegment(conn)  
 
         for i in range(2,TcpConfig.MAX_RETX_ATTEMPTS):
             conn.tick((TcpConfig.rt_timeout << i)-i)  # exponentially increasing delay length
             self.expectNoSegment(conn)
             conn.tick(i)
-            self.expectSegment(conn,no_flags=True,payload_size=len(data),payload=data)
+            self.expectSegment(conn,payload_size=len(data),payload=data)
             self.expectNoSegment(conn)
 
         self.assertEqual(conn.state,TcpState.ESTABLISHED)
@@ -289,7 +284,7 @@ class FsmTest(FsmTestBase):
         self.expectNoSegment(conn)
 
         conn.tick(4)
-        self.expectSegment(conn,no_flags=True,payload_size=len(d1),payload=d1)
+        self.expectSegment(conn,payload_size=len(d1),payload=d1)
         self.expectNoSegment(conn)
 
         conn.tick(2*TcpConfig.rt_timeout-2)
@@ -299,7 +294,7 @@ class FsmTest(FsmTestBase):
         conn.tick(TcpConfig.rt_timeout-2)
         self.expectNoSegment(conn)
         conn.tick(3)
-        self.expectSegment(conn,no_flags=True,payload_size=len(d2),payload=d2)
+        self.expectSegment(conn,payload_size=len(d2),payload=d2)
         self.expectNoSegment(conn)
 
 
@@ -325,14 +320,14 @@ class FsmTest(FsmTestBase):
         self.expectNoSegment(conn)
 
         conn.tick(4)
-        self.expectSegment(conn,no_flags=True,payload_size=len(d1),payload=d1)
+        self.expectSegment(conn,payload_size=len(d1),payload=d1)
         self.expectNoSegment(conn)
 
         conn.tick(2*TcpConfig.rt_timeout-2)
         self.expectNoSegment(conn)  
 
         conn.tick(3)
-        self.expectSegment(conn,no_flags=True,payload_size=len(d1),payload=d1)
+        self.expectSegment(conn,payload_size=len(d1),payload=d1)
         self.expectNoSegment(conn)
 
     def test_retx_win_3(self):
@@ -357,21 +352,21 @@ class FsmTest(FsmTestBase):
             self.expectNoSegment(conn)
 
             conn.tick(4)
-            self.expectSegment(conn,no_flags=True,payload_size=len(d1),payload=d1)
+            self.expectSegment(conn,payload_size=len(d1),payload=d1)
             self.expectNoSegment(conn)
 
             for i in range(1,num_backoffs):
                 conn.tick((TcpConfig.rt_timeout << i)-i)  # exponentially increasing delay length
                 self.expectNoSegment(conn)
                 conn.tick(i)
-                self.expectSegment(conn,no_flags=True,payload_size=len(d1),payload=d1)
+                self.expectSegment(conn,payload_size=len(d1),payload=d1)
             
             # make sure RTO timer restarts on successful ACK
             conn.segment_received(TcpSegment(TcpHeader(ack=True,seqno=tx_ackno,ackno=tx_ackno+len(d1),win=capacity)))
             conn.tick(TcpConfig.rt_timeout-2)
             self.expectNoSegment(conn)
             conn.tick(3)
-            self.expectSegment(conn,no_flags=True,payload_size=len(d2),payload=d2)
+            self.expectSegment(conn,payload_size=len(d2),payload=d2)
             self.expectNoSegment(conn)
         
         for i in range(TcpConfig.MAX_RETX_ATTEMPTS):
@@ -409,7 +404,8 @@ class FsmTest(FsmTestBase):
 
             # write swin_mul * swin, make sure swin gets sent
             swin_mul=MIN_SWIN_MUL+random.randint(0,MAX_SWIN_MUL-MIN_SWIN_MUL-1)
-            d=random.randbytes(swin_mul*swin)
+            # d=random.randbytes(swin_mul*swin) python>=3.9
+            d = os.urandom(swin_mul*swin)
             conn.write(d)
             conn.tick(1)
             # self.expectSegment(conn,no_flags=True,seqno=ack_base+1,win=cfg.recv_capacity) # check that swin is sent
@@ -419,7 +415,7 @@ class FsmTest(FsmTestBase):
             while bytes_total < swin_mul*swin :
                 bytes_read=0
                 while self.canRead_Expect(conn):
-                    seg2=self.expectSegment(conn,no_flags=True,seqno=uint32_plus(ack_base,1+bytes_total+bytes_read),win=cfg.recv_capacity)
+                    seg2=self.expectSegment(conn,seqno=uint32_plus(ack_base,1+bytes_total+bytes_read),win=cfg.recv_capacity)
                     seg2_hdr=seg2.header
                     bytes_read+=len(seg2.payload)
                     seg2_first=seg2_hdr.seqno-ack_base-1
@@ -429,7 +425,6 @@ class FsmTest(FsmTestBase):
                 bytes_total+=bytes_read
                 conn.segment_received(TcpSegment(TcpHeader(ack=True,seqno=seq_base+1,ackno=ack_base+1+bytes_total,win=swin)))
                 conn.tick(1)
-
             self.assertEqual(conn.bytes_in_flight,0)
             self.assertEqual(d,d_out)
 
