@@ -38,23 +38,25 @@ class TcpSocket:
         if self._tcp._state != TcpState.SYN_SENT:
             raise RuntimeError(f'Tcp state is not SYN_SENT after calling connect()')
         self._tcp_loop(lambda: self._tcp.state == TcpState.SYN_SENT)
-        print(f'Successfully connected to {adapter_cfg.daddr}:{adapter_cfg.dport}')
+        # print(f'Successfully connected to {adapter_cfg.daddr}:{adapter_cfg.dport}')
         self._tcp_thread = Thread(target=self._tcp_main)
-        self._tcp_thread.run()
+        self._tcp_thread.start()
 
     def listen_and_accept(self, adapter_cfg: FdAdapterConfig):
         self._init_tcp()
         self._tcp.set_listening()
         self._tcp_loop(lambda: self._tcp.state in [TcpState.LISTEN, TcpState.SYN_RECEIVED])
-        print(f'Successfully receive connection from {adapter_cfg.daddr}:{adapter_cfg.dport}')
+        # print(f'Successfully receive connection from {adapter_cfg.daddr}:{adapter_cfg.dport}')
         self._tcp_thread = Thread(target=self._tcp_main, args=[self])
-        self._tcp_thread.run()
+        self._tcp_thread.start()
 
     def _tcp_main(self):
         try:
             assert self._tcp
             self._tcp_loop(lambda:True)
             os.close(self._adapter.fileno())
+            self.thread_data.parent_sock.close()
+            self.thread_data.child_sock.close()
             if not self._tcp.active:
                 print("DEBUG: TCP connection finished")
         except Exception as e:
@@ -85,7 +87,7 @@ class TcpSocket:
                 self._tcp.segment_received(seg)
             if self.thread_data.closed and self._tcp.bytes_in_flight == 0 and not self.fully_acked:
                 self.fully_acked = True
-            log("FSM","adapter -> tcp")
+            # log("FSM","adapter -> tcp")
         self._loop.add_rule(
             self._adapter,
             selectors.EVENT_READ,
@@ -100,7 +102,7 @@ class TcpSocket:
         def on_adapter_writable():
             while self._tcp.segments_out:
                 self._adapter.write(self._tcp.segments_out.popleft())
-            log("FSM","tcp -> adapter")
+            # log("FSM","tcp -> adapter")
         self._loop.add_rule(
             self._adapter,
             selectors.EVENT_WRITE,
@@ -117,7 +119,7 @@ class TcpSocket:
             # data = self.thread_data.read(remaining_capacity)
             data = self.thread_data.recv(remaining_capacity)
             amount_written = self._tcp.write(data)
-            log("FSM","thread -> tcp")
+            # log("FSM","thread -> tcp")
             if amount_written != len(data):
                 raise RuntimeError(
                     'TcpConnection.write() accept less than advertised length')
@@ -150,7 +152,7 @@ class TcpSocket:
             buf = outbound.peek_output(amount_to_write)
             bytes_written = self.thread_data.send(buf)
             outbound.pop_output(bytes_written)
-            log("FSM","tcp -> thread")
+            # log("FSM","tcp -> thread")
             if outbound.error or outbound.eof:
                 self.thread_data.close()
                 self.inbound_shutdown = True
@@ -171,6 +173,14 @@ class TcpSocket:
 
     def recv(self, buf_size: int) -> bytes:
         return self.thread_data.child_sock.recv(buf_size)
+
+    def close(self):
+        self._tcp.shutdown_write()
+        while(self._tcp.active):
+            pass
+        self._abort=True
+        if self._tcp_thread:
+            self._tcp_thread.join()
 
 class Address:
     def __init__(self, ip, port = 80):
