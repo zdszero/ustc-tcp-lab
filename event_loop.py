@@ -90,7 +90,7 @@ class EventLoop:
         
         readable, writeable, _ = select.select(self.rlist, self.wlist, [], timeout_ms / 1000)
 
-        something_interested = False
+        # something_interested = False
         if not readable and not writeable:
             return False
         for fileobj in readable:
@@ -121,8 +121,8 @@ class EventLoop:
         # print(self.wlist)
         # print("readable:"+str(readable)+" writeable:"+str(writeable))
 
-        if not something_interested:
-            return False
+        # if not something_interested:
+        #     return False
         return True
 
 
